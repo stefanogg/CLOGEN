@@ -1,0 +1,363 @@
+---
+title: "ML of mortality with  lineages: random split train-set (with hyperparameters tuning / VANANZ only)"
+author: "Stefano Giulieri"
+date: "07/04/2021"
+output: 
+  html_document:
+    toc: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd(stringr::str_c(here::here(), "/ALL/ML/no_variants_data/model2_lineages"))
+msg <- glue::glue("My directory is: {getwd()}")
+message(msg)
+```
+
+Here we update the ML model of mortality that uses  lineages only for prediction. 
+
+For consistency with the `no_variants_data` model, we use VANANZ only (so that we can use both duration of bacteraemia and vancomycin MIC predictors later on - **however, this means that we need to limit observations to the ones with the above predictors!). 
+
+Here we split randomly between train and set, **stratified by mortality**
+
+**Note that in this version we normalise all variables**
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(themis)
+library(vip)
+library(skimr)
+library(patchwork)
+rm(list = ls())
+```
+
+# General concept
+
+Build a RF model (**later: try other models as well**) to assess the predictive role of bacterial genomic predictors.
+
+Following models will be tested:
+
+1. Micro + clinical
+2. Lineages only
+
+
+# The data
+
+```{r}
+pheno_geno <- readRDS("processed_data/pheno_geno_data/VANANZ.lineages.pheno.geno.Rda")
+```
+
+# Data splitting
+
+```{r}
+set.seed(1234)
+splits <- rsample::initial_split(pheno_geno, prop = .8, strata = mortality)
+df_train <- training(splits)
+df_test <- testing(splits)
+```
+
+# Recipe to account for class inbalance
+
+*Consider centering and scaling* (`caret::preProcess()`, see https://topepo.github.io/caret/pre-processing.html) or (`recipes::step_normalize()`, https://recipes.tidymodels.org/reference/step_normalize.html)
+
+See also
+https://juliasilge.com/blog/star-trek/
+https://recipes.tidymodels.org/reference/step_normalize.html
+
+
+```{r}
+rf_rec <- recipes::recipe(mortality ~ ., data = df_train) %>%
+  step_zv(all_numeric()) %>%
+ step_normalize(all_numeric()) %>%
+  themis::step_downsample(mortality) %>%
+  prep(retain = TRUE)
+df_rec <- summary(rf_rec)
+# trained <- prep(rf_rec, training = df_train)
+# transformed <- bake(trained, df_train)
+```
+
+# Prepare RF model
+
+For hyperparameters tuning see https://juliasilge.com/blog/sf-trees-random-tuning/
+
+```{r}
+rf_mod <- parsnip::rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 500
+) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+rf_wf <- workflows::workflow() %>%
+  add_recipe(rf_rec) %>%
+  add_model(rf_mod) 
+rf_wf
+```
+
+# Train hyperparameters
+
+## Resampling for cross-validation
+
+Prepare for cross-validation using resampling
+
+```{r}
+set.seed(1234)
+folds <- rsample::vfold_cv(df_train, v = 10, strata = mortality)
+folds
+```
+
+## Train in parallel
+
+To have an initial idea of the tuning parameters, we first run on a grid of 20 models
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(1234)
+rf_fit_rs <- 
+  rf_wf %>% 
+  tune_grid(resamples = folds,
+            grid = 20,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+rf_fit_rs
+```
+
+# Initial assessment of the model
+
+```{r}
+autoplot(rf_fit_rs) +
+  # ylim(0,1) +
+  theme_bw()
+
+rf_fit_rs %>%
+  show_best()
+```
+
+# A more accurate tuning using `grid_regular()`
+
+Based on this we can refine the grid search
+
+```{r}
+doParallel::registerDoParallel()
+
+rf_grid <- grid_regular(
+  mtry(range = c(1,5)),
+  min_n(range = c(30,40)),
+  levels = 5
+)
+
+rf_grid
+
+rf_fit_rs <- 
+  rf_wf %>% 
+  tune_grid(resamples = folds,
+            grid = rf_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+```
+
+How does the training look *now*?
+
+``` {r}
+# Collect metrics
+rf_fit_rs %>%
+  show_best()
+
+p1 <- rf_fit_rs %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(y = "AUC") +
+  theme_bw()
+p1
+
+df_metrics <- tune::collect_metrics(rf_fit_rs)
+metrics_train <- df_metrics %>%
+  slice_max(order_by = mean, n = 1) %>%
+  transmute(dataset = "train",
+            .metric,
+            .estimate = mean)
+
+
+
+
+
+# Collect predictions
+df_roc <- rf_fit_rs %>%
+  tune::collect_predictions() 
+
+p2 <- df_roc %>%
+  group_by(.config) %>%
+  yardstick::roc_curve(truth = mortality, .pred_Died) %>%
+  autoplot()
+p2
+```
+
+# Chose the best model and fit it 
+
+``` {r}
+best <- rf_fit_rs %>%
+  tune::select_best()
+
+final_wf <- rf_wf %>%
+  tune::finalize_workflow(best) 
+
+final_rf <- final_wf %>%
+  extract_spec_parsnip() %>%
+  set_engine(engine = "ranger", importance = "impurity")
+
+final_wf <- final_wf %>%
+  workflows::update_model(final_rf)
+
+final_wf
+
+final_fit <- final_wf %>%
+  tune::last_fit(splits)
+final_fit
+```
+
+# Final assessment on the test dataset
+
+## Metrics
+
+``` {r}
+final_fit %>%
+  collect_metrics()
+
+df_metrics <- final_fit %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  mutate(dataset = "test") %>%
+  select(-c(.config, .estimator)) %>%
+  bind_rows(metrics_train)
+```
+
+## Confusion matrix
+
+```{r}
+rf_testing_pred <- final_fit %>%
+  collect_predictions()
+
+rf_testing_pred <- rf_testing_pred %>%
+  mutate(dataset = "test")
+
+p3 <- rf_testing_pred %>% 
+  conf_mat(mortality, .pred_class) %>% 
+  autoplot(type = "heatmap")
+p3
+```
+
+## ROC curve
+
+``` {r}
+df_roc <- df_roc %>%
+  mutate(dataset = "train") %>%
+  semi_join(best) %>%
+  bind_rows(rf_testing_pred)
+
+p4 <- df_roc %>%
+  group_by(dataset) %>%
+  yardstick::roc_curve(truth = mortality, .pred_Died) %>%
+  autoplot() +
+  scale_colour_manual(values = c("red", "blue"))
+p4
+```
+
+Here we construct the precision recall curve
+
+```{r}
+p5 <- df_roc %>%
+  group_by(dataset) %>%
+  yardstick::pr_curve(truth = mortality, .pred_Died) %>%
+  autoplot() +
+  scale_colour_manual(values = c("red", "blue"))
+p5
+
+df_metrics <- df_roc %>%
+  group_by(dataset) %>%
+  yardstick::pr_auc(truth = mortality, .pred_Died) %>%
+  select(-.estimator) %>%
+  bind_rows(df_metrics) %>%
+  arrange(desc(.metric), desc(dataset))
+
+
+```
+
+## Feature importance
+
+``` {r}
+p6 <- final_fit %>%
+  purrr::pluck(".workflow", 1) %>%
+  workflowsets::extract_fit_parsnip() %>%
+  vip::vip() +
+  theme_bw()
+p6
+```
+
+# Output 
+
+## Models
+
+```{r}
+name <- "ML_mortality_with_geno_lineages"
+
+dir <- "processed_data/"
+dir.create(dir)
+
+dir <- str_c(dir, "models/")
+dir.create(dir)
+
+rf_fit_rs %>%
+  saveRDS(str_c(dir, name, "_train_resample.Rda"))
+
+final_fit %>%
+  saveRDS(str_c(dir, name, "_last_fit.Rda"))
+```
+
+## Metrics and predictions
+
+```{r}
+dir <- "processed_data/metrics/"
+dir.create(dir)
+
+df_metrics %>%
+  write_tsv(str_c(dir, name, "_metrics.tab"))
+
+df_roc %>%
+  write_tsv(str_c(dir, name, "_predictions.tab"))
+```
+
+## Importance
+
+```{r}
+dir <- "processed_data/importance/"
+dir.create(dir)
+
+df_importance <- final_fit %>%
+  extract_workflow() %>%
+  extract_fit_parsnip() %>%
+  vi()
+
+# x <- final_fit$.workflow
+# x <- x[[1]]
+# x$fit$fit$fit$variable.importance
+  
+df_importance %>%
+  write_tsv(str_c(dir, name, "_importance.tab"))
+```
+
+
+## Figures
+
+```{r}
+p7 <- wrap_plots(p1, p2, p3, p4, p5, p6, nrow = 3)
+ggsave(str_c("figures/", name, "_plots.pdf"), p7)
+```
+
+
