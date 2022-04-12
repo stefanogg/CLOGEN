@@ -4,22 +4,18 @@
 
 # Library
 library(tidyverse)
-rm(list = ls())
 
-setwd(paste0(here::here(), "/ALL/ML/no_variants_data/model2_lineages"))
-getwd()
 
 # Pheno and lineages file ---------------------------------------------------------------------------------------
 f <- paste0(
   here::here(),
   "/ALL/Phenotypes/processed_data/df_mortality_all.Rda")
 pheno <- readRDS(f) %>%
-  drop_na(mortality, vancoetest, sab_duration, gender, age, hca, cci, pitt, pat, mecA, CC) %>%
-  select(sample_id, mortality, CC) %>%
-  mutate(CC = as.factor(CC))
+  drop_na(mortality, vancoetest, sab_duration, gender, age, hca, cci, pitt, pat, mecA) %>%
+  select(sample_id, mortality)
 
 # Geno file ----------------------------------------------------------------------------------------
-# Raw data: pyseer gene burden output for VANANZ baseline mortality
+# Raw data: pyseer gene burden output for cohort A baseline mortality
 # We have generated two sample x gene matrices:
 # a matrix with rare mutations only 
 # a matrix with all mutations
@@ -46,7 +42,6 @@ lineages <- readRDS(f)
 pheno_geno <- pheno %>%
   # inner_join(geno) %>%
   inner_join(lineages) %>%
-  select(-CC) %>%
   select(-sample_id) 
 # quick check for missing values
 map_int(pheno_geno, function(x) sum(is.na(x))) %>%
@@ -56,8 +51,8 @@ map_int(pheno_geno, function(x) sum(is.na(x))) %>%
 
 # Save processed data ------------------------------------------------------------------------------
 pheno_geno %>%
-  saveRDS("processed_data/pheno_geno_data/VANANZ.lineages.pheno.geno.Rda")
+  saveRDS("processed_data/pheno_geno_data/lineages.pheno.geno.Rda")
 
 pheno_geno %>%
-  saveRDS("~/Documents/Transfer_with_server/VANANZ.lineages.pheno.geno.Rda")
+  saveRDS("~/Documents/Transfer_with_server/lineages.pheno.geno.Rda")
 
