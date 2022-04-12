@@ -6,4 +6,4 @@ The script `maigrett.sh` allows the full bacterial GWAS pipeline using Pyseer. I
 - the reference in Genbak format
 - a regions file (genes, operons, pathways) in the format requested by Pyseer  
 
-The directory R contains the scripts used to fit the random forest models of 30 day mortality from S. aureus bacteraemia
+The directory `R` contains the scripts used to fit the random forest models of 30 day mortality from S. aureus bacteraemia
