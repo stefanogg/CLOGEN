@@ -9,14 +9,11 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd(stringr::str_c(here::here(), "/ALL/ML/no_variants_data/model2_lineages"))
-msg <- glue::glue("My directory is: {getwd()}")
-message(msg)
 ```
 
 Here we update the ML model of mortality that uses  lineages only for prediction. 
 
-For consistency with the `no_variants_data` model, we use VANANZ only (so that we can use both duration of bacteraemia and vancomycin MIC predictors later on - **however, this means that we need to limit observations to the ones with the above predictors!). 
+For consistency with the `no_variants_data` model, we use cohort A only (so that we can use both duration of bacteraemia and vancomycin MIC predictors later on - **however, this means that we need to limit observations to the ones with the above predictors!). 
 
 Here we split randomly between train and set, **stratified by mortality**
 
@@ -45,7 +42,7 @@ Following models will be tested:
 # The data
 
 ```{r}
-pheno_geno <- readRDS("processed_data/pheno_geno_data/VANANZ.lineages.pheno.geno.Rda")
+pheno_geno <- readRDS("processed_data/pheno_geno_data/lineages.pheno.geno.Rda")
 ```
 
 # Data splitting
@@ -299,65 +296,4 @@ p6 <- final_fit %>%
   theme_bw()
 p6
 ```
-
-# Output 
-
-## Models
-
-```{r}
-name <- "ML_mortality_with_geno_lineages"
-
-dir <- "processed_data/"
-dir.create(dir)
-
-dir <- str_c(dir, "models/")
-dir.create(dir)
-
-rf_fit_rs %>%
-  saveRDS(str_c(dir, name, "_train_resample.Rda"))
-
-final_fit %>%
-  saveRDS(str_c(dir, name, "_last_fit.Rda"))
-```
-
-## Metrics and predictions
-
-```{r}
-dir <- "processed_data/metrics/"
-dir.create(dir)
-
-df_metrics %>%
-  write_tsv(str_c(dir, name, "_metrics.tab"))
-
-df_roc %>%
-  write_tsv(str_c(dir, name, "_predictions.tab"))
-```
-
-## Importance
-
-```{r}
-dir <- "processed_data/importance/"
-dir.create(dir)
-
-df_importance <- final_fit %>%
-  extract_workflow() %>%
-  extract_fit_parsnip() %>%
-  vi()
-
-# x <- final_fit$.workflow
-# x <- x[[1]]
-# x$fit$fit$fit$variable.importance
-  
-df_importance %>%
-  write_tsv(str_c(dir, name, "_importance.tab"))
-```
-
-
-## Figures
-
-```{r}
-p7 <- wrap_plots(p1, p2, p3, p4, p5, p6, nrow = 3)
-ggsave(str_c("figures/", name, "_plots.pdf"), p7)
-```
-
 
