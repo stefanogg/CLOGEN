@@ -1,4 +1,4 @@
-# Code to run the statistical genomics analyses included in the manuscript: A statistical genomics framework to trace bacterial genomic predictors of clinical outcomes in Staphylococcus aureus bacteraemia
+# Code to run the statistical genomics analyses included in the manuscript: A statistical genomics framework to trace bacterial genomic predictors of clinical outcomes in Staphylococcus aureus bacteraemia (Clinical Outcomes Genomics, CLOGEN)
 
 The script `maigrett.sh` allows the full bacterial GWAS pipeline using Pyseer. It will need as minimum:
 - the output of snippy using a single reference for all isolates included
