@@ -6,6 +6,8 @@ The script `maigrett.sh` allows the full bacterial GWAS pipeline using Pyseer. I
 - the output of snippy using a single reference for all isolates included
 - a tab-separated phenotype file in the format requested by Pyseer
 - the reference in Genbak format
-- a regions file (genes, operons, pathways) in the format requested by Pyseer  
+- a regions file (genes, operons, pathways) in the format requested by Pyseer.
+
+The name 'maigrett' was inspired by the famous police detective Jules Maigret created by the Belgian writer Georges Simenon. It also a tribute to the R piping package magrittr. 
 
 The directory `R` contains the scripts used to fit the random forest models of 30 day mortality from S. aureus bacteraemia
