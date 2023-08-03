@@ -1,0 +1,129 @@
+---
+title: "Logistic regression of mortality in cohort A"
+author: "Stefano Giulieri"
+date: "2023-04-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd(stringr::str_c(here::here(), "/Cell_Reports_revision/ML"))
+msg <- glue::glue("My directory is {getwd()}")
+message(msg)
+```
+
+Here we a fit a logistic regression model of mortality in VANANZ only so that we can use both duration of bacteraemia and vancomycin MIC predictors. This analysis was requested by the Cell Reports reviewers
+
+Logistic regression in R:
+https://quantifyinghealth.com/logistic-regression-in-r-with-categorical-variables/
+
+Logistic regression in `tidymodels`:
+https://www.kaggle.com/code/j3rome/logistic-regression-tidymodels
+https://medium.com/the-researchers-guide/modelling-binary-logistic-regression-using-tidymodels-library-in-r-part-1-c1bdce0ac055
+https://medium.com/the-researchers-guide/modelling-binary-logistic-regression-using-tidymodels-library-in-r-part-1-c1bdce0ac055
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(skimr)
+
+rm(list = ls())
+```
+
+# General concept
+
+We want to compare our random forest model with a more established ("standard") logistic regression model of 30-day mortality from SAB. This would allow to determine the adjusted weights (odds ratio and effect sizes, along with confidence intervals and p-values) of the predictors [host clinical, treatment and microbiology factors] on mortality.
+
+# The data
+
+We use the same dataset: all cohort A episodes with available predictors of interest. Also, we excluded episodes with no therapy (there was no such episode in cohort A, but there were a couple in cohort B)
+
+```{r}
+df_mortality <- read_tsv("raw_data/ML_mortality_split_v5_input_data.tab")
+
+df_mortality %>%
+  skim()
+```
+
+Better to transform character variables into factors
+
+```{r}
+df_mortality <- df_mortality %>%
+  mutate(across(.cols = where(is.character),
+                .fns = as.factor)) %>%
+  mutate(mortality = fct_relevel(mortality, "Survived"))
+
+df_mortality %>%
+  skim()
+```
+
+# The model
+
+```{r}
+model <- logistic_reg()
+# recipe <- recipe(mortality ~ ., data = df_mortality) %>%
+#   step_dummy(all_factor_predictors()) 
+recipe <- recipe(mortality ~ ., data = df_mortality) 
+wf <- workflow() %>%
+  add_recipe(recipe) %>%
+  add_model(model)
+
+m1 <- wf  %>% fit(data = df_mortality)
+tidy(m1, conf.int = T)
+```
+
+Print in a nicer format
+
+```{r}
+print_log_reg <- function(df){
+  df <- df %>%
+     filter(term != "(Intercept)") %>%
+    transmute(predictor = term, or = exp(estimate), or_low = exp(conf.low), or_high = exp(conf.high), p = p.value) %>%
+  arrange(p)
+  
+  df <- df %>%
+  mutate(across(starts_with("or"),
+                ~formatC(., format = "f", digits = 2))) %>%
+  transmute(predictor, or = str_c(or, " (", or_low, "-", or_high, ")"), p)
+  
+  return(df)
+}
+
+df_multiv <- tidy(m1, conf.int = T) %>%
+  print_log_reg() %>%
+  rename_with(~str_c("multiv_", .), or:p)
+```
+
+# Univariate analysis
+
+```{r}
+models <- list()
+for (var in colnames(df_mortality)[-1]){
+  v <- rlang::sym(var)
+  model <- logistic_reg() %>%
+    fit(as.formula(str_c("mortality ~", var)), data = df_mortality)
+  
+  models[[var]] <- model
+}
+df_models <- tibble(predictor = names(models),
+                    model = models) %>%
+  group_by(predictor) %>%
+  mutate(tidy = map(model, tidy, conf.int = T)) %>%
+  unnest(tidy) %>%
+  filter(term != "(Intercept)")
+df_univ <- df_models %>%
+  print_log_reg() %>%
+  rename_with(~str_c("univ_", .), or:p)
+df_univ
+```
+
+# Export table to the manuscript
+
+```{r}
+df_log_reg <- df_univ %>%
+  left_join(df_multiv)
+
+df_log_reg %>%
+  write_csv("processed_data/logistic_regression_mortality_clinical.csv")
+```
+
