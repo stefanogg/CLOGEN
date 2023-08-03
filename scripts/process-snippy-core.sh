@@ -11,7 +11,8 @@ usage () {
 	echo " -r : path to reference in gbk format"
 	echo " -s : path to snippy outout directory"
 	echo " -g : minimum percentage of non-gaps to keep as core genome (default: 0.9)"
-	echo "Please run this script in conda snippy environment"
+	echo " -p : run iqtree (default: false)"
+	echo "Please run this script in a conda snippy environment"
 }
 
 # Print usage and exit if no arguments
@@ -23,14 +24,16 @@ fi
 
 # Parse options
 CORE=0.9
+TREE=false
 
-while getopts 'r:s:g:' option
+while getopts 'r:s:g:p' option
 do
   	case $option in
 		r) REF=$OPTARG ;;
 		s) SNIPPY=$OPTARG ;;
 		g) CORE=$OPTARG ;;
-        esac
+        p) TREE=true ;;
+		esac
 done
 
 # skip to parse command line arguments
@@ -48,6 +51,10 @@ echo "The isolates file is $ISO"
 echo "The reference is $REF"
 echo "The snippy outout directory is $SNIPPY"
 echo "The threshold to keep core genome positions is $CORE non-gaps"
+if $TREE
+then
+	echo "$0 will run IQ-tree"
+fi
 
 # Run snippy-core
 mkdir snippy-core
@@ -78,13 +85,16 @@ ALN=core${TAG}.aln
 eval "$(conda shell.bash hook)"
 conda activate snippy
 
-# Generate ML tree
-mkdir iqtree
-cd iqtree
-cp ../goalign/$ALN .
-CONST=$(iqtree-calc_const_sites.sh ../core.ref.fa | cut -f2 -d '-' | cut -f2 -d ' ')
-iqtree -fconst $CONST -m GTR+G4 -bb 1000 -alrt 1000 -redo -ntmax 4 -nt AUTO -st DNA -s $ALN
-cd ..
+if $TREE
+then
+	# Generate ML tree
+	mkdir iqtree
+	cd iqtree
+	cp ../goalign/$ALN .
+	CONST=$(iqtree-calc_const_sites.sh ../core.ref.fa | cut -f2 -d '-' | cut -f2 -d ' ')
+	iqtree -fconst $CONST -m GTR+G4 -bb 1000 -alrt 1000 -ntmax 4 -nt AUTO -st DNA -s $ALN
+	cd ..
+fi
 
 # Go back to initial directory
 cd ..

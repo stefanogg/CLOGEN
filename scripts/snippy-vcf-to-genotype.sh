@@ -10,7 +10,7 @@ usage () {
 	echo "OPTIONS:"
 	echo " -s : path to snippy outout directory"
 	echo " -c : path to coreness.tab"
-	echo " -p : path to phylogenetic tree"
+	echo " -p : path to phylogenetic tree (if not provided will skip homoplasy step)"
 	echo " -g : minimum percentage of non-gaps to keep as core genome (default: 0.9)"
 	echo "Please run this script in conda snippy environment"
 }
@@ -45,14 +45,17 @@ shift $((OPTIND-1))
 ISO=$(readlink -e $1)
 SNIPPY=$(readlink -e $SNIPPY)
 CORENESS=$(readlink -e $CORENESS)
-TREE=$(readlink -e $TREE)
 
 # Starting statements
 echo "Running $0"
 echo "The isolates file is $ISO"
 echo "The snippy outout directory is $SNIPPY"
 echo "The snippy-coreness file is $CORENESS"
-echo "The tree file is $TREE"
+if [ ! -z $TREE ]
+then
+	TREE=$(readlink -e $TREE)
+	echo "The tree file is $TREE"
+fi
 echo "The threshold to keep core genome positions is $CORE non-gaps"
 echo "$0 will use $THREADS threads"
 
@@ -64,18 +67,27 @@ cp $ISO isolates.txt
 
 # Generate a merged vcf and filter core genome mutations
 ~/perl5/bin/process-mutations.sh -s $SNIPPY -c $CORENESS -g $CORE -t $THREADS isolates.txt
+EXIT=$(echo $?)
+if [ $EXIT -ne 0 ]
+then
+    echo "$0 was not able to generate a merged vcf. Exiting"
+    exit 1
+fi
 VCF=$(readlink -e merged.core*vcf.gz)
 
-# Run homoplasyFinder
-eval "$(conda shell.bash hook)"
-conda activate base
-mkdir homoplasy_finder
-cd homoplasy_finder
-NAME=$(basename $TREE)
-CLEAN_TREE=clean.$NAME
-gotree prune -i $TREE Reference > $CLEAN_TREE
-~/perl5/bin/run-homoplasyfinder.sh -p $CLEAN_TREE $VCF
-cd ..
+if [ ! -z $TREE ]
+then
+	# Run homoplasyFinder
+	eval "$(conda shell.bash hook)"
+	conda activate base
+	mkdir homoplasy_finder
+	cd homoplasy_finder
+	NAME=$(basename $TREE)
+	CLEAN_TREE=clean.$NAME
+	gotree prune -i $TREE Reference > $CLEAN_TREE
+	~/perl5/bin/run-homoplasyfinder.sh -p $CLEAN_TREE $VCF
+	cd ..
+fi
 
 # Generate pyseer genotype files
 eval "$(conda shell.bash hook)"

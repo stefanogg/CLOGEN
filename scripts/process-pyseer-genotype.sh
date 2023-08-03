@@ -8,7 +8,7 @@ usage () {
 	echo "USAGE"
 	echo " $0 [options] <merged.vcf.gz>"
 	echo "OPTIONS:"
-	echo " -H : bed file with homoplastic sites"
+	echo " -H : bed file with homoplastic sites (if empty skip homoplasy filter)"
 	echo " -P : prefix for output files (default core90)"
 	echo " -Q : maximum allele frequency threshold for rare mutations (default 0.01)" 
 	echo " -m : don't generate gene-burden files (default: false)"
@@ -33,7 +33,7 @@ while getopts 't:mH:P:Q:' option
 do
   	case $option in
 		t) THREADS=$OPTARG ;;
-                m) MUTATIONS_ONLY=true ;;
+        m) MUTATIONS_ONLY=true ;;
 		H) HOMOPLASY=$OPTARG ;;
 		P) PREFIX=$OPTARG ;;
 		Q) MAX_FRAC=$OPTARG ;;
@@ -49,12 +49,16 @@ VCF=$1
 
 # Get full path to files
 VCF=$(readlink -e $VCF)
-HOMOPLASY=$(readlink -e $HOMOPLASY)
+
 
 # Starting statements
 echo "Running $0"
 echo "The merged vcf file is $VCF"
-echo "The file with homoplastic sites is $HOMOPLASY"
+if [ ! -z $HOMOPLASY ]
+then
+	HOMOPLASY=$(readlink -e $HOMOPLASY)
+	echo "The file with homoplastic sites is $HOMOPLASY"
+fi
 echo "The prefix for output files is $PREFIX"
 echo "The maxmimum allele fraction for rare mutations is $MAX_FRAC"
 
@@ -63,19 +67,18 @@ echo "Generating mutations lists for pyseer"
 mkdir mutations
 cd mutations
 
-# Mask mutations at non-homoplastic sites. bedtools much fast than bcftools here. Output is the same
+# Mask mutations at non-homoplastic sites. bedtools much faster than bcftools here. Output is the same
 
 #bcftools view -R $HOMOPLASY -O z $VCF > homoplasy.$PREFIX.vcf.gz
-bedtools intersect -u -header -a $VCF -b $HOMOPLASY | bgzip > homoplasy.$PREFIX.vcf.gz
+if [ ! -z $HOMOPLASY ]
+then
+	bedtools intersect -u -header -a $VCF -b $HOMOPLASY | bgzip > homoplasy.$PREFIX.vcf.gz
+	bcftools view -e 'ANN[0] ~ "[^&]synonymous"' -O z --threads $THREADS homoplasy.$PREFIX.vcf.gz > nosyn.homoplasy.$PREFIX.vcf.gz
 
-# Get stats
-bcftools stats homoplasy.$PREFIX.vcf.gz > homoplasy.$PREFIX.vcf.stats.txt
-
-# Mask synonymous mutations
-bcftools view -e 'ANN[0] ~ "[^&]synonymous"' -O z --threads $THREADS homoplasy.$PREFIX.vcf.gz > nosyn.homoplasy.$PREFIX.vcf.gz
-
-# Get stats
-bcftools stats nosyn.homoplasy.$PREFIX.vcf.gz > nosyn.homoplasy.$PREFIX.vcf.stats.gz
+	# Get stats
+	bcftools stats homoplasy.$PREFIX.vcf.gz > homoplasy.$PREFIX.vcf.stats.txt
+	bcftools stats nosyn.homoplasy.$PREFIX.vcf.gz > nosyn.homoplasy.$PREFIX.vcf.stats.gz
+fi
 
 # Mask synonymous mutations but NOT homoplastic sites
 bcftools view -e 'ANN[0] ~ "[^&]synonymous"' -O z --threads $THREADS $VCF > nosyn.$PREFIX.vcf.gz
@@ -117,7 +120,7 @@ bcftools view -Q $MAX_FRAC -O z --threads $THREADS trunc.$PREFIX.vcf.gz > rare.t
 bcftools stats rare.trunc.$PREFIX.vcf.gz > rare.trunc.$PREFIX.vcf.stats.txt
 
 # Check number of mutations
-grep record *stats*
+# grep record *stats*
 
 # Index vcf files
 for i in *vcf.gz; do bcftools index $i; done
